@@ -7,7 +7,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const NOTION_TOKEN = process.env.NOTION_TOKEN; // Your integration token
-const MCP_ENDPOINT = 'https://api.notion.com/mcp/v1';
+const MCP_ENDPOINT = 'https://mcp.notion.com/mcp';
 
 // Store session information
 const sessions = new Map();
