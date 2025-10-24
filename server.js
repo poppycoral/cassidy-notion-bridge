@@ -6,7 +6,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const NOTION_TOKEN = process.env.NOTION_TOKEN;
-const NOTION_API = '373;
+const NOTION_API = 'https://api.notion.com/v1';
 
 // Health check
 app.get('/health', (req, res) => {
