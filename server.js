@@ -1,209 +1,228 @@
- const express = require('express');
+const express = require('express');
 const axios = require('axios');
-const crypto = require('crypto');
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const NOTION_TOKEN = process.env.NOTION_TOKEN; // Your integration token
-const MCP_ENDPOINT = 'https://mcp.notion.com/mcp';
-
-// Store session information
-const sessions = new Map();
-
-// Initialize MCP session
-async function initializeSession() {
-  const sessionId = crypto.randomUUID();
-  
-  try {
-    const response = await axios.post(MCP_ENDPOINT, {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2025-06-18',
-        capabilities: {},
-        clientInfo: {
-          name: 'cassidy-mcp-bridge',
-          version: '1.0.0'
-        }
-      }
-    }, {
-      headers: {
-        'Authorization': `Bearer ${NOTION_TOKEN}`,
-        'Content-Type': 'application/json',
-        'MCP-Protocol-Version': '2025-06-18',
-        'Notion-Version': '2022-06-28'
-      }
-    });
-
-    const mcpSessionId = response.headers['mcp-session-id'];
-    sessions.set(sessionId, {
-      mcpSessionId,
-      capabilities: response.data.result.capabilities,
-      createdAt: Date.now()
-    });
-
-    // Send initialized notification
-    await axios.post(MCP_ENDPOINT, {
-      jsonrpc: '2.0',
-      method: 'notifications/initialized'
-    }, {
-      headers: {
-        'Authorization': `Bearer ${NOTION_TOKEN}`,
-        'Content-Type': 'application/json',
-        'MCP-Session-Id': mcpSessionId,
-        'Notion-Version': '2022-06-28'
-      }
-    });
-
-    return sessionId;
-  } catch (error) {
-    console.error('Failed to initialize session:', error.response?.data || error.message);
-    throw error;
-  }
-}
+const NOTION_TOKEN = process.env.NOTION_TOKEN;
+const NOTION_API = '373;
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', sessions: sessions.size });
+  res.json({ status: 'ok' });
 });
 
-// Create a new session
-app.post('/session', async (req, res) => {
-  try {
-    const sessionId = await initializeSession();
-    res.json({ sessionId });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to create session' });
-  }
-});
-
-// List available tools
-app.get('/tools', async (req, res) => {
-  const sessionId = req.headers['x-session-id'];
-  
-  if (!sessionId || !sessions.has(sessionId)) {
-    return res.status(401).json({ error: 'Invalid or missing session' });
-  }
-
-  const session = sessions.get(sessionId);
-
-  try {
-    const response = await axios.post(MCP_ENDPOINT, {
-      jsonrpc: '2.0',
-      id: Date.now(),
-      method: 'tools/list'
-    }, {
-      headers: {
-        'Authorization': `Bearer ${NOTION_TOKEN}`,
-        'Content-Type': 'application/json',
-        'MCP-Session-Id': session.mcpSessionId,
-        'Notion-Version': '2022-06-28'
-      }
-    });
-
-    res.json(response.data.result);
-  } catch (error) {
-    res.status(500).json({ error: error.response?.data || error.message });
-  }
-});
-
-// Execute a tool
-app.post('/execute', async (req, res) => {
-  const sessionId = req.headers['x-session-id'];
-  const { tool, arguments: args } = req.body;
-
-  if (!sessionId || !sessions.has(sessionId)) {
-    return res.status(401).json({ error: 'Invalid or missing session' });
-  }
-
-  const session = sessions.get(sessionId);
-
-  try {
-    const response = await axios.post(MCP_ENDPOINT, {
-      jsonrpc: '2.0',
-      id: Date.now(),
-      method: 'tools/call',
-      params: {
-        name: tool,
-        arguments: args
-      }
-    }, {
-      headers: {
-        'Authorization': `Bearer ${NOTION_TOKEN}`,
-        'Content-Type': 'application/json',
-        'MCP-Session-Id': session.mcpSessionId,
-        'Notion-Version': '2022-06-28'
-      }
-    });
-
-    res.json(response.data.result);
-  } catch (error) {
-    res.status(500).json({ error: error.response?.data || error.message });
-  }
-});
-
-// Simplified endpoints for common actions
+// Search Notion
 app.post('/notion/search', async (req, res) => {
-  const sessionId = req.headers['x-session-id'] || await initializeSession();
-  const session = sessions.get(sessionId);
   const { query } = req.body;
 
   try {
-    const response = await axios.post(MCP_ENDPOINT, {
-      jsonrpc: '2.0',
-      id: Date.now(),
-      method: 'tools/call',
-      params: {
-        name: 'search',
-        arguments: { query }
+    const response = await axios.post(`${NOTION_API}/search`, {
+      query: query,
+      sort: {
+        direction: 'descending',
+        timestamp: 'last_edited_time'
       }
     }, {
       headers: {
         'Authorization': `Bearer ${NOTION_TOKEN}`,
-        'Content-Type': 'application/json',
-        'MCP-Session-Id': session.mcpSessionId,
-        'Notion-Version': '2022-06-28'
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json'
       }
     });
 
-    res.json({ sessionId, result: response.data.result });
+    res.json({ 
+      success: true,
+      results: response.data.results 
+    });
   } catch (error) {
-    res.status(500).json({ error: error.response?.data || error.message });
+    console.error('Search error:', error.response?.data || error.message);
+    res.status(500).json({ 
+      error: error.response?.data || error.message 
+    });
   }
 });
 
+// Create a page
 app.post('/notion/create-page', async (req, res) => {
-  const sessionId = req.headers['x-session-id'] || await initializeSession();
-  const session = sessions.get(sessionId);
   const { parent, title, content } = req.body;
 
   try {
-    const response = await axios.post(MCP_ENDPOINT, {
-      jsonrpc: '2.0',
-      id: Date.now(),
-      method: 'tools/call',
-      params: {
-        name: 'create_page',
-        arguments: { parent, title, content }
-      }
+    const response = await axios.post(`${NOTION_API}/pages`, {
+      parent: { page_id: parent },
+      properties: {
+        title: {
+          title: [{ text: { content: title } }]
+        }
+      },
+      children: content ? [{
+        object: 'block',
+        type: 'paragraph',
+        paragraph: {
+          rich_text: [{ text: { content: content } }]
+        }
+      }] : []
     }, {
       headers: {
         'Authorization': `Bearer ${NOTION_TOKEN}`,
-        'Content-Type': 'application/json',
-        'MCP-Session-Id': session.mcpSessionId,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json'
+      }
+    });
+
+    res.json({ 
+      success: true,
+      page: response.data 
+    });
+  } catch (error) {
+    console.error('Create page error:', error.response?.data || error.message);
+    res.status(500).json({ 
+      error: error.response?.data || error.message 
+    });
+  }
+});
+
+// Update page properties
+app.post('/notion/update-page', async (req, res) => {
+  const { page_id, properties } = req.body;
+
+  try {
+    const response = await axios.patch(`${NOTION_API}/pages/${page_id}`, {
+      properties: properties
+    }, {
+      headers: {
+        'Authorization': `Bearer ${NOTION_TOKEN}`,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json'
+      }
+    });
+
+    res.json({ 
+      success: true,
+      page: response.data 
+    });
+  } catch (error) {
+    console.error('Update page error:', error.response?.data || error.message);
+    res.status(500).json({ 
+      error: error.response?.data || error.message 
+    });
+  }
+});
+
+// Get page content
+app.post('/notion/get-page', async (req, res) => {
+  const { page_id } = req.body;
+
+  try {
+    const response = await axios.get(`${NOTION_API}/pages/${page_id}`, {
+      headers: {
+        'Authorization': `Bearer ${NOTION_TOKEN}`,
         'Notion-Version': '2022-06-28'
       }
     });
 
-    res.json({ sessionId, result: response.data.result });
+    res.json({ 
+      success: true,
+      page: response.data 
+    });
   } catch (error) {
-    res.status(500).json({ error: error.response?.data || error.message });
+    console.error('Get page error:', error.response?.data || error.message);
+    res.status(500).json({ 
+      error: error.response?.data || error.message 
+    });
+  }
+});
+
+// Query database
+app.post('/notion/query-database', async (req, res) => {
+  const { database_id, filter, sorts } = req.body;
+
+  try {
+    const response = await axios.post(`${NOTION_API}/databases/${database_id}/query`, {
+      filter: filter || {},
+      sorts: sorts || []
+    }, {
+      headers: {
+        'Authorization': `Bearer ${NOTION_TOKEN}`,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json'
+      }
+    });
+
+    res.json({ 
+      success: true,
+      results: response.data.results 
+    });
+  } catch (error) {
+    console.error('Query database error:', error.response?.data || error.message);
+    res.status(500).json({ 
+      error: error.response?.data || error.message 
+    });
+  }
+});
+
+// Create database item
+app.post('/notion/create-database-item', async (req, res) => {
+  const { database_id, properties } = req.body;
+
+  try {
+    const response = await axios.post(`${NOTION_API}/pages`, {
+      parent: { database_id: database_id },
+      properties: properties
+    }, {
+      headers: {
+        'Authorization': `Bearer ${NOTION_TOKEN}`,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json'
+      }
+    });
+
+    res.json({ 
+      success: true,
+      page: response.data 
+    });
+  } catch (error) {
+    console.error('Create database item error:', error.response?.data || error.message);
+    res.status(500).json({ 
+      error: error.response?.data || error.message 
+    });
+  }
+});
+
+// Append content to page
+app.post('/notion/append-content', async (req, res) => {
+  const { page_id, content } = req.body;
+
+  try {
+    const response = await axios.patch(`${NOTION_API}/blocks/${page_id}/children`, {
+      children: [{
+        object: 'block',
+        type: 'paragraph',
+        paragraph: {
+          rich_text: [{ text: { content: content } }]
+        }
+      }]
+    }, {
+      headers: {
+        'Authorization': `Bearer ${NOTION_TOKEN}`,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json'
+      }
+    });
+
+    res.json({ 
+      success: true,
+      result: response.data 
+    });
+  } catch (error) {
+    console.error('Append content error:', error.response?.data || error.message);
+    res.status(500).json({ 
+      error: error.response?.data || error.message 
+    });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`MCP Bridge server running on port ${PORT}`);
+  console.log(`Notion API Bridge server running on port ${PORT}`);
 });
